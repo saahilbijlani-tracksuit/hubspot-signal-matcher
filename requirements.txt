@@ -1,0 +1,29 @@
+# HubSpot Signal Matcher Dependencies
+
+# HubSpot API
+hubspot-api-client>=9.0.0
+
+# Supabase (vector database)
+supabase>=2.0.0
+
+# OpenAI (embeddings)
+openai>=1.0.0
+
+# HTTP requests
+httpx>=0.25.0
+requests>=2.31.0
+
+# Data processing
+numpy>=1.24.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Async support
+asyncio-throttle>=1.0.0
+
+# Progress bars for initial setup
+tqdm>=4.65.0
+
+# Type hints
+typing-extensions>=4.5.0
