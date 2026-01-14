@@ -19,6 +19,11 @@ on:
         required: false
         type: number
         default: 100
+      threshold:
+        description: 'Match confidence threshold (0.0-1.0)'
+        required: false
+        type: string
+        default: '0.50'
 
 jobs:
   process:
@@ -44,9 +49,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CONFIDENCE_THRESHOLD: "0.85"
+          CONFIDENCE_THRESHOLD: ${{ github.event.inputs.threshold || '0.50' }}
           PYTHONUNBUFFERED: '1'
         run: |
+          echo "Using confidence threshold: $CONFIDENCE_THRESHOLD"
           if [ -n "${{ github.event.inputs.signal_id }}" ]; then
             python scripts/match_signal.py "${{ github.event.inputs.signal_id }}"
           else
