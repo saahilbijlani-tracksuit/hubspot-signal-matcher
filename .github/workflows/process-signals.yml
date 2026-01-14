@@ -14,11 +14,16 @@ on:
         description: 'Specific Signal ID to process (optional)'
         required: false
         type: string
+      limit:
+        description: 'Max signals to process'
+        required: false
+        type: number
+        default: 100
 
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     
     steps:
       - name: Checkout code
@@ -40,15 +45,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CONFIDENCE_THRESHOLD: "0.85"
+          PYTHONUNBUFFERED: '1'
         run: |
           if [ -n "${{ github.event.inputs.signal_id }}" ]; then
             python scripts/match_signal.py "${{ github.event.inputs.signal_id }}"
           else
-            python scripts/process_all_signals.py
+            python scripts/process_all_signals.py --limit ${{ github.event.inputs.limit || 100 }}
           fi
-      
-      - name: Summary
-        if: always()
-        run: |
-          echo "## Signal Processing Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
