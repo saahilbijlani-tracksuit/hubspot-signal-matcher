@@ -24,13 +24,7 @@ class HubSpotClient:
     SIGNAL_TO_CONTACT_ASSOCIATION = None  # Will be discovered
     
     def __init__(self, access_token: Optional[str] = None):
-        """
-        Initialize HubSpot client.
-        
-        Args:
-            access_token: HubSpot Private App access token.
-                         Falls back to HUBSPOT_ACCESS_TOKEN env var.
-        """
+        """Initialize HubSpot client."""
         self.access_token = access_token or os.environ.get("HUBSPOT_ACCESS_TOKEN")
         if not self.access_token:
             raise ValueError("HubSpot access token required")
@@ -43,7 +37,6 @@ class HubSpotClient:
     def _discover_association_types(self):
         """Discover association type IDs between Signals and other objects."""
         try:
-            # Get Signal -> Contact association type
             response = self.client.crm.associations.v4.schema.definitions_api.get_all(
                 from_object_type=self.SIGNAL_OBJECT_TYPE,
                 to_object_type=self.CONTACT_OBJECT_TYPE
@@ -51,7 +44,7 @@ class HubSpotClient:
             if response.results:
                 self.SIGNAL_TO_CONTACT_ASSOCIATION = response.results[0].type_id
         except Exception as e:
-            print(f"Warning: Could not discover association types: {e}")
+            print(f"Warning: Could not discover association types: {e}", flush=True)
     
     # ==========================================
     # SIGNAL OPERATIONS
@@ -96,6 +89,66 @@ class HubSpotClient:
                 result["contacts"] = [a.to_object_id for a in assoc_list.results]
         
         return result
+    
+    def list_signals(self, limit: int = 100, after: Optional[str] = None) -> dict:
+        """List signals with pagination."""
+        properties = [
+            "signal_name",
+            "signal_description",
+            "signal_citation",
+            "signal_type",
+            "signal_status",
+        ]
+        
+        response = self.client.crm.objects.basic_api.get_page(
+            object_type=self.SIGNAL_OBJECT_TYPE,
+            limit=limit,
+            after=after,
+            properties=properties,
+            associations=[self.COMPANY_OBJECT_TYPE, self.CONTACT_OBJECT_TYPE]
+        )
+        
+        results = []
+        for signal in response.results:
+            associations = self._parse_associations(signal.associations)
+            results.append({
+                "id": signal.id,
+                "properties": signal.properties,
+                "associations": associations
+            })
+        
+        return {
+            "results": results,
+            "paging": {
+                "next": response.paging.next.after if response.paging and response.paging.next else None
+            }
+        }
+    
+    def list_signals_without_associations(self, limit: int = 100) -> list:
+        """List signals that don't have company or contact associations."""
+        unassociated = []
+        after = None
+        
+        while len(unassociated) < limit:
+            page = self.list_signals(limit=min(100, limit - len(unassociated)), after=after)
+            
+            for signal in page["results"]:
+                associations = signal.get("associations", {})
+                companies = associations.get("companies", [])
+                contacts = associations.get("contacts", [])
+                
+                # Include if no associations
+                if not companies and not contacts:
+                    unassociated.append(signal)
+                    
+                    if len(unassociated) >= limit:
+                        break
+            
+            after = page["paging"]["next"]
+            if not after:
+                break
+        
+        return unassociated
     
     # ==========================================
     # COMPANY OPERATIONS  
@@ -270,7 +323,7 @@ class HubSpotClient:
             )
             return True
         except Exception as e:
-            print(f"Error creating Signal-Company association: {e}")
+            print(f"Error creating Signal-Company association: {e}", flush=True)
             return False
     
     def create_signal_contact_association(self, signal_id: str, contact_id: str) -> bool:
@@ -279,7 +332,7 @@ class HubSpotClient:
             self._discover_association_types()
             
         if not self.SIGNAL_TO_CONTACT_ASSOCIATION:
-            print("Warning: Signal-Contact association type not found")
+            print("Warning: Signal-Contact association type not found", flush=True)
             return False
             
         try:
@@ -295,7 +348,7 @@ class HubSpotClient:
             )
             return True
         except Exception as e:
-            print(f"Error creating Signal-Contact association: {e}")
+            print(f"Error creating Signal-Contact association: {e}", flush=True)
             return False
     
     def get_company_count(self) -> int:
