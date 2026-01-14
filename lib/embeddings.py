@@ -1,1 +1,147 @@
-"""\nOpenAI Embedding Generator\n"""\nimport os\nimport time\nfrom typing import List, Optional\nfrom openai import OpenAI\n\n\nclass EmbeddingGenerator:\n    MODEL = "text-embedding-3-small"\n    DIMENSIONS = 1536\n    MAX_TOKENS_PER_REQUEST = 8000\n    MAX_REQUESTS_PER_MINUTE = 3000\n    \n    def __init__(self, api_key: Optional[str] = None):\n        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")\n        if not self.api_key:\n            raise ValueError("OpenAI API key required")\n        self.client = OpenAI(api_key=self.api_key)\n        self._request_count = 0\n        self._minute_start = time.time()\n    \n    def _rate_limit(self):\n        self._request_count += 1\n        if time.time() - self._minute_start > 60:\n            self._request_count = 0\n            self._minute_start = time.time()\n        if self._request_count >= self.MAX_REQUESTS_PER_MINUTE - 100:\n            sleep_time = 60 - (time.time() - self._minute_start)\n            if sleep_time > 0: time.sleep(sleep_time)\n            self._request_count = 0\n            self._minute_start = time.time()\n    \n    def generate_embedding(self, text: str) -> List[float]:\n        if not text or not text.strip():\n            return [0.0] * self.DIMENSIONS\n        max_chars = self.MAX_TOKENS_PER_REQUEST * 4\n        if len(text) > max_chars: text = text[:max_chars]\n        self._rate_limit()\n        response = self.client.embeddings.create(model=self.MODEL, input=text, dimensions=self.DIMENSIONS)\n        return response.data[0].embedding\n    \n    def generate_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:\n        embeddings = []\n        for i in range(0, len(texts), batch_size):\n            batch = texts[i:i + batch_size]\n            processed_batch = []\n            empty_indices = []\n            for j, text in enumerate(batch):\n                if text and text.strip():\n                    max_chars = self.MAX_TOKENS_PER_REQUEST * 4\n                    processed_batch.append(text[:max_chars] if len(text) > max_chars else text)\n                else:\n                    empty_indices.append(j)\n            self._rate_limit()\n            if processed_batch:\n                response = self.client.embeddings.create(model=self.MODEL, input=processed_batch, dimensions=self.DIMENSIONS)\n                batch_embeddings = [e.embedding for e in response.data]\n                result = []\n                embedding_idx = 0\n                for j in range(len(batch)):\n                    if j in empty_indices:\n                        result.append([0.0] * self.DIMENSIONS)\n                    else:\n                        result.append(batch_embeddings[embedding_idx])\n                        embedding_idx += 1\n                embeddings.extend(result)\n            else:\n                embeddings.extend([[0.0] * self.DIMENSIONS] * len(batch))\n        return embeddings\n    \n    @staticmethod\n    def prepare_company_text(name: str, domain: str) -> str:\n        parts = []\n        if name: parts.append(f"Company: {name}")\n        if domain: parts.append(f"Domain: {domain}")\n        return " | ".join(parts) if parts else ""\n    \n    @staticmethod\n    def prepare_contact_text(firstname: str, lastname: str, company: str) -> str:\n        parts = []\n        full_name = " ".join(filter(None, [firstname, lastname]))\n        if full_name: parts.append(f"Person: {full_name}")\n        if company: parts.append(f"Company: {company}")\n        return " | ".join(parts) if parts else ""\n    \n    @staticmethod\n    def prepare_signal_text(description: str, citation: str) -> str:\n        parts = []\n        if description: parts.append(description)\n        if citation: parts.append(f"Source: {citation}")\n        return " | ".join(parts) if parts else ""\n
+"""OpenAI Embedding Generator
+
+Handles text embedding generation using OpenAI's API:
+- Single text embedding
+- Batch embedding with rate limiting
+- Text preprocessing for optimal embeddings
+"""
+
+import os
+import time
+from typing import List, Optional
+from openai import OpenAI
+
+
+class EmbeddingGenerator:
+    """Generator for OpenAI text embeddings."""
+    
+    MODEL = "text-embedding-3-small"
+    DIMENSIONS = 1536
+    MAX_TOKENS_PER_REQUEST = 8000
+    MAX_REQUESTS_PER_MINUTE = 3000
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize embedding generator."""
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key required")
+        
+        self.client = OpenAI(api_key=self.api_key)
+        self._request_count = 0
+        self._minute_start = time.time()
+    
+    def _rate_limit(self):
+        """Simple rate limiting to avoid hitting OpenAI limits."""
+        self._request_count += 1
+        
+        if time.time() - self._minute_start > 60:
+            self._request_count = 0
+            self._minute_start = time.time()
+        
+        if self._request_count >= self.MAX_REQUESTS_PER_MINUTE - 100:
+            sleep_time = 60 - (time.time() - self._minute_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            self._request_count = 0
+            self._minute_start = time.time()
+    
+    def generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for a single text."""
+        if not text or not text.strip():
+            return [0.0] * self.DIMENSIONS
+        
+        max_chars = self.MAX_TOKENS_PER_REQUEST * 4
+        if len(text) > max_chars:
+            text = text[:max_chars]
+        
+        self._rate_limit()
+        
+        response = self.client.embeddings.create(
+            model=self.MODEL,
+            input=text,
+            dimensions=self.DIMENSIONS
+        )
+        
+        return response.data[0].embedding
+    
+    def generate_embeddings_batch(
+        self, 
+        texts: List[str],
+        batch_size: int = 100
+    ) -> List[List[float]]:
+        """Generate embeddings for multiple texts in batches."""
+        embeddings = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            
+            processed_batch = []
+            empty_indices = []
+            
+            for j, text in enumerate(batch):
+                if text and text.strip():
+                    max_chars = self.MAX_TOKENS_PER_REQUEST * 4
+                    processed_batch.append(text[:max_chars] if len(text) > max_chars else text)
+                else:
+                    empty_indices.append(j)
+            
+            self._rate_limit()
+            
+            if processed_batch:
+                response = self.client.embeddings.create(
+                    model=self.MODEL,
+                    input=processed_batch,
+                    dimensions=self.DIMENSIONS
+                )
+                
+                batch_embeddings = [e.embedding for e in response.data]
+                
+                result = []
+                embedding_idx = 0
+                for j in range(len(batch)):
+                    if j in empty_indices:
+                        result.append([0.0] * self.DIMENSIONS)
+                    else:
+                        result.append(batch_embeddings[embedding_idx])
+                        embedding_idx += 1
+                
+                embeddings.extend(result)
+            else:
+                embeddings.extend([[0.0] * self.DIMENSIONS] * len(batch))
+        
+        return embeddings
+    
+    # ==========================================
+    # TEXT PREPARATION HELPERS
+    # ==========================================
+    
+    @staticmethod
+    def prepare_company_text(name: str, domain: str) -> str:
+        """Prepare company text for embedding."""
+        parts = []
+        if name:
+            parts.append(f"Company: {name}")
+        if domain:
+            parts.append(f"Domain: {domain}")
+        return " | ".join(parts) if parts else ""
+    
+    @staticmethod
+    def prepare_contact_text(firstname: str, lastname: str, company: str) -> str:
+        """Prepare contact text for embedding."""
+        parts = []
+        full_name = " ".join(filter(None, [firstname, lastname]))
+        if full_name:
+            parts.append(f"Person: {full_name}")
+        if company:
+            parts.append(f"Company: {company}")
+        return " | ".join(parts) if parts else ""
+    
+    @staticmethod
+    def prepare_signal_text(description: str, citation: str) -> str:
+        """Prepare signal text for embedding."""
+        parts = []
+        if description:
+            parts.append(description)
+        if citation:
+            parts.append(f"Source: {citation}")
+        return " | ".join(parts) if parts else ""
