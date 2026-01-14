@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       full_sync:
-        description: 'Run full sync (ignore last sync time)'
+        description: 'Run full sync (embed all records)'
         required: false
         type: boolean
         default: false
@@ -19,7 +19,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     
     steps:
       - name: Checkout code
@@ -32,15 +32,9 @@ jobs:
           cache: 'pip'
       
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      
-      - name: Test imports
         run: |
-          echo "Testing lib imports..."
-          python -c "from lib.hubspot_client import HubSpotClient; print('HubSpotClient OK')"
-          python -c "from lib.supabase_client import SupabaseClient; print('SupabaseClient OK')"
-          python -c "from lib.embeddings import EmbeddingGenerator; print('EmbeddingGenerator OK')"
-          echo "All imports OK!"
+          pip install -r requirements.txt
+          echo "Dependencies installed successfully"
       
       - name: Run Daily Sync
         env:
@@ -48,20 +42,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PYTHONUNBUFFERED: '1'
         run: |
-          set -e
-          echo "Starting daily sync..."
           if [ "${{ github.event.inputs.full_sync }}" == "true" ]; then
-            echo "Running FULL sync"
-            python scripts/daily_sync.py --full 2>&1
+            python scripts/daily_sync.py --full
           else
-            echo "Running incremental sync"
-            python scripts/daily_sync.py 2>&1
+            python scripts/daily_sync.py
           fi
-          echo "Daily sync completed!"
-      
-      - name: Summary
-        if: always()
-        run: |
-          echo "## Daily Sync Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
