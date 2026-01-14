@@ -23,98 +23,94 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python -c "
-import os
-import sys
+          python << 'EOF'
+          import os
+          import sys
 
-print('=== Checking Secrets Format ===')
-print()
+          print("=== Checking Secrets Format ===")
+          print()
 
-# Check each secret
-secrets_ok = True
+          secrets_ok = True
 
-# SUPABASE_URL
-url = os.environ.get('SUPABASE_URL', '')
-print(f'SUPABASE_URL length: {len(url)}')
-print(f'SUPABASE_URL starts with https://: {url.startswith(\"https://\")}')
-print(f'SUPABASE_URL ends with .supabase.co: {url.rstrip(\"/\").endswith(\".supabase.co\")}')
-if not url.startswith('https://') or not '.supabase.co' in url:
-    print('  ❌ SUPABASE_URL format issue!')
-    secrets_ok = False
-else:
-    print('  ✅ SUPABASE_URL looks good')
-print()
+          # SUPABASE_URL
+          url = os.environ.get("SUPABASE_URL", "")
+          print(f"SUPABASE_URL length: {len(url)}")
+          print(f"SUPABASE_URL starts with https://: {url.startswith('https://')}")
+          if not url.startswith("https://") or ".supabase.co" not in url:
+              print("  ERROR: SUPABASE_URL format issue!")
+              secrets_ok = False
+          else:
+              print("  OK: SUPABASE_URL looks good")
+          print()
 
-# SUPABASE_KEY  
-key = os.environ.get('SUPABASE_KEY', '')
-print(f'SUPABASE_KEY length: {len(key)}')
-print(f'SUPABASE_KEY starts with eyJ: {key.startswith(\"eyJ\")}')
-if len(key) < 100 or not key.startswith('eyJ'):
-    print('  ❌ SUPABASE_KEY format issue!')
-    secrets_ok = False
-else:
-    print('  ✅ SUPABASE_KEY looks good')
-print()
+          # SUPABASE_KEY  
+          key = os.environ.get("SUPABASE_KEY", "")
+          print(f"SUPABASE_KEY length: {len(key)}")
+          print(f"SUPABASE_KEY starts with eyJ: {key.startswith('eyJ')}")
+          if len(key) < 100 or not key.startswith("eyJ"):
+              print("  ERROR: SUPABASE_KEY format issue!")
+              secrets_ok = False
+          else:
+              print("  OK: SUPABASE_KEY looks good")
+          print()
 
-# HUBSPOT_ACCESS_TOKEN
-hs = os.environ.get('HUBSPOT_ACCESS_TOKEN', '')
-print(f'HUBSPOT_ACCESS_TOKEN length: {len(hs)}')
-print(f'HUBSPOT_ACCESS_TOKEN starts with pat-: {hs.startswith(\"pat-\")}')
-if len(hs) < 20:
-    print('  ❌ HUBSPOT_ACCESS_TOKEN too short!')
-    secrets_ok = False
-else:
-    print('  ✅ HUBSPOT_ACCESS_TOKEN looks good')
-print()
+          # HUBSPOT_ACCESS_TOKEN
+          hs = os.environ.get("HUBSPOT_ACCESS_TOKEN", "")
+          print(f"HUBSPOT_ACCESS_TOKEN length: {len(hs)}")
+          if len(hs) < 20:
+              print("  ERROR: HUBSPOT_ACCESS_TOKEN too short!")
+              secrets_ok = False
+          else:
+              print("  OK: HUBSPOT_ACCESS_TOKEN looks good")
+          print()
 
-# OPENAI_API_KEY
-oai = os.environ.get('OPENAI_API_KEY', '')
-print(f'OPENAI_API_KEY length: {len(oai)}')
-print(f'OPENAI_API_KEY starts with sk-: {oai.startswith(\"sk-\")}')
-if len(oai) < 20 or not oai.startswith('sk-'):
-    print('  ❌ OPENAI_API_KEY format issue!')
-    secrets_ok = False
-else:
-    print('  ✅ OPENAI_API_KEY looks good')
-print()
+          # OPENAI_API_KEY
+          oai = os.environ.get("OPENAI_API_KEY", "")
+          print(f"OPENAI_API_KEY length: {len(oai)}")
+          print(f"OPENAI_API_KEY starts with sk-: {oai.startswith('sk-')}")
+          if len(oai) < 20 or not oai.startswith("sk-"):
+              print("  ERROR: OPENAI_API_KEY format issue!")
+              secrets_ok = False
+          else:
+              print("  OK: OPENAI_API_KEY looks good")
+          print()
 
-print('=== Testing Connections ===')
-print()
+          print("=== Testing Connections ===")
+          print()
 
-# Test HubSpot
-try:
-    from hubspot import HubSpot
-    client = HubSpot(access_token=hs)
-    result = client.crm.companies.basic_api.get_page(limit=1)
-    print(f'✅ HubSpot connection works!')
-except Exception as e:
-    print(f'❌ HubSpot error: {e}')
-    secrets_ok = False
+          # Test HubSpot
+          try:
+              from hubspot import HubSpot
+              client = HubSpot(access_token=hs)
+              result = client.crm.companies.basic_api.get_page(limit=1)
+              print("OK: HubSpot connection works!")
+          except Exception as e:
+              print(f"ERROR: HubSpot - {e}")
+              secrets_ok = False
 
-# Test Supabase
-try:
-    from supabase import create_client
-    sb = create_client(url.rstrip('/'), key)
-    result = sb.table('companies').select('id').limit(1).execute()
-    print(f'✅ Supabase connection works!')
-except Exception as e:
-    print(f'❌ Supabase error: {e}')
-    secrets_ok = False
+          # Test Supabase
+          try:
+              from supabase import create_client
+              sb = create_client(url.rstrip("/"), key)
+              result = sb.table("companies").select("id").limit(1).execute()
+              print("OK: Supabase connection works!")
+          except Exception as e:
+              print(f"ERROR: Supabase - {e}")
+              secrets_ok = False
 
-# Test OpenAI
-try:
-    from openai import OpenAI
-    client = OpenAI(api_key=oai)
-    # Just init, don't make a call to save money
-    print(f'✅ OpenAI client initialized!')
-except Exception as e:
-    print(f'❌ OpenAI error: {e}')
-    secrets_ok = False
+          # Test OpenAI
+          try:
+              from openai import OpenAI
+              client = OpenAI(api_key=oai)
+              print("OK: OpenAI client initialized!")
+          except Exception as e:
+              print(f"ERROR: OpenAI - {e}")
+              secrets_ok = False
 
-print()
-if secrets_ok:
-    print('🎉 All checks passed!')
-else:
-    print('❌ Some checks failed - fix the issues above')
-    sys.exit(1)
-"
+          print()
+          if secrets_ok:
+              print("SUCCESS: All checks passed!")
+          else:
+              print("FAILED: Some checks failed - fix the issues above")
+              sys.exit(1)
+          EOF
