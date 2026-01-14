@@ -34,6 +34,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       
+      - name: Test imports
+        run: |
+          echo "Testing lib imports..."
+          python -c "from lib.hubspot_client import HubSpotClient; print('HubSpotClient OK')"
+          python -c "from lib.supabase_client import SupabaseClient; print('SupabaseClient OK')"
+          python -c "from lib.embeddings import EmbeddingGenerator; print('EmbeddingGenerator OK')"
+          echo "All imports OK!"
+      
       - name: Run Daily Sync
         env:
           HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
@@ -41,11 +49,16 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          set -e
+          echo "Starting daily sync..."
           if [ "${{ github.event.inputs.full_sync }}" == "true" ]; then
-            python scripts/daily_sync.py --full
+            echo "Running FULL sync"
+            python scripts/daily_sync.py --full 2>&1
           else
-            python scripts/daily_sync.py
+            echo "Running incremental sync"
+            python scripts/daily_sync.py 2>&1
           fi
+          echo "Daily sync completed!"
       
       - name: Summary
         if: always()
