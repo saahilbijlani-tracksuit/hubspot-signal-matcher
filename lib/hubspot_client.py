@@ -15,19 +15,12 @@ from hubspot.crm.associations.v4 import BatchInputPublicDefaultAssociationMultiP
 
 
 class HubSpotClient:
-    """Client for HubSpot CRM operations."""
-
-    # Custom object type IDs (for SDK calls)
     SIGNAL_OBJECT_TYPE = "2-54609655"
     COMPANY_OBJECT_TYPE = "0-2"
     CONTACT_OBJECT_TYPE = "0-1"
-
-    # Object type IDs for REST API v4 URLs
     SIGNAL_OBJECT_TYPE_API = "2-54609655"
     COMPANY_OBJECT_TYPE_API = "companies"
     CONTACT_OBJECT_TYPE_API = "contacts"
-
-    # Association type IDs
     SIGNAL_TO_COMPANY_ASSOCIATION = 421
     SIGNAL_TO_CONTACT_ASSOCIATION = None
 
@@ -41,9 +34,7 @@ class HubSpotClient:
     def _discover_association_types(self):
         try:
             response = self.client.crm.associations.v4.schema.definitions_api.get_all(
-                from_object_type=self.SIGNAL_OBJECT_TYPE,
-                to_object_type=self.CONTACT_OBJECT_TYPE
-            )
+                from_object_type=self.SIGNAL_OBJECT_TYPE, to_object_type=self.CONTACT_OBJECT_TYPE)
             if response.results:
                 self.SIGNAL_TO_CONTACT_ASSOCIATION = response.results[0].type_id
         except Exception as e:
@@ -53,8 +44,7 @@ class HubSpotClient:
         properties = ["signal_name", "signal_description", "signal_citation", "signal_type", "signal_status", "signal_origin", "signal_weighting"]
         response = self.client.crm.objects.basic_api.get_by_id(
             object_type=self.SIGNAL_OBJECT_TYPE, object_id=signal_id, properties=properties,
-            associations=[self.COMPANY_OBJECT_TYPE, self.CONTACT_OBJECT_TYPE]
-        )
+            associations=[self.COMPANY_OBJECT_TYPE, self.CONTACT_OBJECT_TYPE])
         return {"id": response.id, "properties": response.properties, "associations": self._parse_associations(response.associations)}
 
     def _parse_associations(self, associations) -> dict:
@@ -72,14 +62,12 @@ class HubSpotClient:
         properties = ["signal_name", "signal_description", "signal_citation", "signal_type", "signal_status"]
         response = self.client.crm.objects.basic_api.get_page(
             object_type=self.SIGNAL_OBJECT_TYPE, limit=limit, after=after, properties=properties,
-            associations=[self.COMPANY_OBJECT_TYPE, self.CONTACT_OBJECT_TYPE]
-        )
+            associations=[self.COMPANY_OBJECT_TYPE, self.CONTACT_OBJECT_TYPE])
         results = [{"id": s.id, "properties": s.properties, "associations": self._parse_associations(s.associations)} for s in response.results]
         return {"results": results, "paging": {"next": response.paging.next.after if response.paging and response.paging.next else None}}
 
     def list_signals_without_associations(self, limit: int = 100) -> list:
-        unassociated = []
-        after = None
+        unassociated, after = [], None
         while len(unassociated) < limit:
             page = self.list_signals(limit=min(100, limit - len(unassociated)), after=after)
             for signal in page["results"]:
@@ -175,12 +163,10 @@ class HubSpotClient:
             return False
 
     def get_company_count(self) -> int:
-        response = self.client.crm.companies.search_api.do_search(public_object_search_request={"filterGroups": [], "limit": 1})
-        return response.total
+        return self.client.crm.companies.search_api.do_search(public_object_search_request={"filterGroups": [], "limit": 1}).total
 
     def get_contact_count(self) -> int:
-        response = self.client.crm.contacts.search_api.do_search(public_object_search_request={"filterGroups": [], "limit": 1})
-        return response.total
+        return self.client.crm.contacts.search_api.do_search(public_object_search_request={"filterGroups": [], "limit": 1}).total
 
     def get_company_details(self, company_id: str) -> dict:
         properties = ["name", "domain", "lifecyclestage", "company_type", "ae_owner", "sdr_owner", "brand_champ", "hubspot_owner_id"]
@@ -190,8 +176,7 @@ class HubSpotClient:
                 "id": response.id, "name": response.properties.get("name", ""), "domain": response.properties.get("domain", ""),
                 "lifecyclestage": response.properties.get("lifecyclestage", ""), "company_type": response.properties.get("company_type", ""),
                 "ae_owner": response.properties.get("ae_owner", ""), "sdr_owner": response.properties.get("sdr_owner", ""),
-                "brand_champ": response.properties.get("brand_champ", ""), "hubspot_owner_id": response.properties.get("hubspot_owner_id", "")
-            }
+                "brand_champ": response.properties.get("brand_champ", ""), "hubspot_owner_id": response.properties.get("hubspot_owner_id", "")}
         except Exception as e:
             print(f"Error fetching company details: {e}")
             return {}
@@ -204,6 +189,16 @@ class HubSpotClient:
             return f"{response.first_name or ''} {response.last_name or ''}".strip()
         except Exception as e:
             print(f"Error fetching owner name: {e}")
+            return ""
+
+    def get_owner_email(self, owner_id: str) -> str:
+        if not owner_id:
+            return ""
+        try:
+            response = self.client.crm.owners.owners_api.get_by_id(owner_id=int(owner_id))
+            return response.email or ""
+        except Exception as e:
+            print(f"Error fetching owner email: {e}")
             return ""
 
     def update_signal_owner(self, signal_id: str, owner_id: str) -> bool:
