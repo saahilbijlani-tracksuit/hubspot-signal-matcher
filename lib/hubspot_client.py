@@ -25,7 +25,7 @@ class HubSpotClient:
     
     # Object names (for REST API URL paths)
     # REST API requires object NAMES, not numeric IDs
-    SIGNAL_OBJECT_NAME = "p19622650_signals"  # Custom object: p{portalId}_{objectName}
+    SIGNAL_OBJECT_NAME = "signals"  # Custom object schema name
     COMPANY_OBJECT_NAME = "companies"
     CONTACT_OBJECT_NAME = "contacts"
     
