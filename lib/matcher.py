@@ -68,8 +68,10 @@ class SignalMatcher:
         company_owner = company_details.get("hubspot_owner_id", "")
 
         if stage == "Prospect":
-            owner_id = ae_owner or company_owner
-            shared_ids = [uid for uid in [sdr_owner, company_owner] if uid and uid != owner_id]
+            # Fallback chain: AE -> SDR -> Company Owner
+            owner_id = ae_owner or sdr_owner or company_owner
+            # Shared: everyone else who isn't the owner
+            shared_ids = [uid for uid in [ae_owner, sdr_owner, company_owner] if uid and uid != owner_id]
         elif stage == "Customer":
             owner_id = brand_champ or company_owner
             shared_ids = [company_owner] if company_owner and company_owner != owner_id else []
@@ -118,7 +120,7 @@ Examples:
 
     def search_company_by_name(self, company_name: str) -> List[dict]:
         try:
-            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "''")
+            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "''") 
             results = self.supabase.client.table("companies").select(
                 "hubspot_id, name, domain"
             ).or_(f"name.ilike.%{sanitized_name}%,domain.ilike.%{sanitized_name}%").limit(5).execute()
@@ -209,13 +211,17 @@ Examples:
                     log(f"    Skipped {match.name} (already associated)")
 
             owner_name = ""
+            owner_email = ""
             shared_user_names = []
+            shared_user_emails = []
+
             if best_match.owner_id:
                 log(f"  Assigning owner: {best_match.owner_id}")
                 owner_success = self.hubspot.update_signal_owner(signal_id, best_match.owner_id)
                 if owner_success:
                     owner_name = self.hubspot.get_owner_name(best_match.owner_id)
-                    log(f"    Owner set: {owner_name}")
+                    owner_email = self.hubspot.get_owner_email(best_match.owner_id)
+                    log(f"    Owner set: {owner_name} ({owner_email})")
                 else:
                     log(f"    Failed to set owner")
 
@@ -224,10 +230,16 @@ Examples:
                 shared_success = self.hubspot.update_signal_shared_users(signal_id, best_match.shared_user_ids)
                 if shared_success:
                     shared_user_names = [self.hubspot.get_owner_name(uid) for uid in best_match.shared_user_ids]
+                    shared_user_emails = [self.hubspot.get_owner_email(uid) for uid in best_match.shared_user_ids]
                     log(f"    Shared users set: {shared_user_names}")
 
             if notify_slack and self.slack and best_match.association_created:
-                self.slack.notify_signal_matched(signal_id=signal_id, signal_name=signal_name, signal_description=description, company_name=best_match.name, company_id=best_match.hubspot_id, company_stage=best_match.stage, confidence=best_match.similarity, owner_name=owner_name, shared_users=shared_user_names)
+                self.slack.notify_signal_matched(
+                    signal_id=signal_id, signal_name=signal_name, signal_description=description,
+                    company_name=best_match.name, company_id=best_match.hubspot_id, company_stage=best_match.stage,
+                    confidence=best_match.similarity, owner_name=owner_name, shared_users=shared_user_names,
+                    owner_email=owner_email, shared_user_emails=shared_user_emails
+                )
 
             result = {
                 "signal_id": signal_id, "signal_type": signal_type, "extracted_companies": company_names,
