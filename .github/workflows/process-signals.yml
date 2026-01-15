@@ -7,7 +7,7 @@ on:
   schedule:
     # Run every day at 3 AM UTC (after daily sync)
     - cron: '0 3 * * *'
-  
+
   workflow_dispatch:
     inputs:
       signal_id:
@@ -29,26 +29,27 @@ jobs:
   process:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      
+
       - name: Process Signals
         env:
           HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           CONFIDENCE_THRESHOLD: ${{ github.event.inputs.threshold || '0.80' }}
           PYTHONUNBUFFERED: '1'
         run: |
