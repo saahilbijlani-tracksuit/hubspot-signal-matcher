@@ -1,5 +1,4 @@
-"""
-HubSpot API Client
+"""HubSpot API Client
 
 Handles all interactions with HubSpot CRM:
 - Fetching Signals, Companies, and Contacts
@@ -23,11 +22,12 @@ class HubSpotClient:
     COMPANY_OBJECT_TYPE = "0-2"
     CONTACT_OBJECT_TYPE = "0-1"
     
-    # Object names (for REST API URL paths)
-    # REST API requires object NAMES, not numeric IDs
-    SIGNAL_OBJECT_NAME = "signals"  # Custom object schema name
-    COMPANY_OBJECT_NAME = "companies"
-    CONTACT_OBJECT_NAME = "contacts"
+    # Object type IDs for REST API v4 URLs
+    # For custom objects, use the numeric type ID (2-XXXXXX) NOT the simple name
+    # Simple name "signals" gets misinterpreted as DISCOUNT_CODE
+    SIGNAL_OBJECT_TYPE_API = "2-54609655"  # Use objectTypeId for custom objects
+    COMPANY_OBJECT_TYPE_API = "companies"   # Standard objects use names
+    CONTACT_OBJECT_TYPE_API = "contacts"    # Standard objects use names
     
     # Association type IDs (Signal <-> Company/Contact)
     SIGNAL_TO_COMPANY_ASSOCIATION = 421
@@ -401,8 +401,8 @@ class HubSpotClient:
         """
         try:
             # Use direct API call for custom object associations
-            # REST API requires object NAMES in URL path, not numeric type IDs
-            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_NAME}/{signal_id}/associations/{self.COMPANY_OBJECT_NAME}/{company_id}"
+            # For custom objects, use numeric type ID (2-XXXXX) in the URL path
+            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_TYPE_API}/{signal_id}/associations/{self.COMPANY_OBJECT_TYPE_API}/{company_id}"
             
             headers = {
                 "Authorization": f"Bearer {self.access_token}",
@@ -410,7 +410,7 @@ class HubSpotClient:
             }
             
             payload = [{
-                "associationCategory": "HUBSPOT_DEFINED",
+                "associationCategory": "USER_DEFINED",  # Custom associations are USER_DEFINED
                 "associationTypeId": self.SIGNAL_TO_COMPANY_ASSOCIATION
             }]
             
@@ -447,8 +447,8 @@ class HubSpotClient:
             
         try:
             # Use direct API call for custom object associations
-            # REST API requires object NAMES in URL path, not numeric type IDs
-            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_NAME}/{signal_id}/associations/{self.CONTACT_OBJECT_NAME}/{contact_id}"
+            # For custom objects, use numeric type ID (2-XXXXX) in the URL path
+            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_TYPE_API}/{signal_id}/associations/{self.CONTACT_OBJECT_TYPE_API}/{contact_id}"
             
             headers = {
                 "Authorization": f"Bearer {self.access_token}",
@@ -456,7 +456,7 @@ class HubSpotClient:
             }
             
             payload = [{
-                "associationCategory": "HUBSPOT_DEFINED",
+                "associationCategory": "USER_DEFINED",  # Custom associations are USER_DEFINED
                 "associationTypeId": self.SIGNAL_TO_CONTACT_ASSOCIATION
             }]
             
