@@ -18,10 +18,16 @@ from hubspot.crm.associations.v4 import BatchInputPublicDefaultAssociationMultiP
 class HubSpotClient:
     """Client for HubSpot CRM operations."""
     
-    # Custom object type IDs
+    # Custom object type IDs (for SDK calls)
     SIGNAL_OBJECT_TYPE = "2-54609655"
     COMPANY_OBJECT_TYPE = "0-2"
     CONTACT_OBJECT_TYPE = "0-1"
+    
+    # Object names (for REST API URL paths)
+    # REST API requires object NAMES, not numeric IDs
+    SIGNAL_OBJECT_NAME = "p19622650_signals"  # Custom object: p{portalId}_{objectName}
+    COMPANY_OBJECT_NAME = "companies"
+    CONTACT_OBJECT_NAME = "contacts"
     
     # Association type IDs (Signal <-> Company/Contact)
     SIGNAL_TO_COMPANY_ASSOCIATION = 421
@@ -395,8 +401,8 @@ class HubSpotClient:
         """
         try:
             # Use direct API call for custom object associations
-            # The SDK has issues with custom object type IDs
-            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_TYPE}/{signal_id}/associations/{self.COMPANY_OBJECT_TYPE}/{company_id}"
+            # REST API requires object NAMES in URL path, not numeric type IDs
+            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_NAME}/{signal_id}/associations/{self.COMPANY_OBJECT_NAME}/{company_id}"
             
             headers = {
                 "Authorization": f"Bearer {self.access_token}",
@@ -441,7 +447,8 @@ class HubSpotClient:
             
         try:
             # Use direct API call for custom object associations
-            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_TYPE}/{signal_id}/associations/{self.CONTACT_OBJECT_TYPE}/{contact_id}"
+            # REST API requires object NAMES in URL path, not numeric type IDs
+            url = f"https://api.hubapi.com/crm/v4/objects/{self.SIGNAL_OBJECT_NAME}/{signal_id}/associations/{self.CONTACT_OBJECT_NAME}/{contact_id}"
             
             headers = {
                 "Authorization": f"Bearer {self.access_token}",
