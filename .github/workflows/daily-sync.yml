@@ -1,5 +1,6 @@
 # Daily Sync Workflow
-# Runs daily to sync new/modified Companies and Contacts to Supabase
+# Scheduled job that syncs modified Companies and Contacts
+# Runs as a backup to webhook-based syncing
 
 name: Daily Sync
 
@@ -8,10 +9,21 @@ on:
     # Run every day at 2 AM UTC
     - cron: '0 2 * * *'
   
+  # Allow manual triggering
   workflow_dispatch:
     inputs:
       full_sync:
-        description: 'Run full sync (embed all records)'
+        description: 'Run full sync (ignore last sync time)'
+        required: false
+        type: boolean
+        default: false
+      companies_only:
+        description: 'Only sync companies'
+        required: false
+        type: boolean
+        default: false
+      contacts_only:
+        description: 'Only sync contacts'
         required: false
         type: boolean
         default: false
@@ -19,7 +31,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120  # 2 hours for large syncs
     
     steps:
       - name: Checkout code
@@ -32,9 +44,26 @@ jobs:
           cache: 'pip'
       
       - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Build sync command
+        id: build-command
         run: |
-          pip install -r requirements.txt
-          echo "Dependencies installed successfully"
+          CMD="python scripts/daily_sync.py"
+          
+          if [ "${{ github.event.inputs.full_sync }}" == "true" ]; then
+            CMD="$CMD --full"
+          fi
+          
+          if [ "${{ github.event.inputs.companies_only }}" == "true" ]; then
+            CMD="$CMD --companies-only"
+          fi
+          
+          if [ "${{ github.event.inputs.contacts_only }}" == "true" ]; then
+            CMD="$CMD --contacts-only"
+          fi
+          
+          echo "command=$CMD" >> $GITHUB_OUTPUT
       
       - name: Run Daily Sync
         env:
@@ -42,10 +71,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PYTHONUNBUFFERED: '1'
+        run: ${{ steps.build-command.outputs.command }}
+      
+      - name: Summary
+        if: always()
         run: |
-          if [ "${{ github.event.inputs.full_sync }}" == "true" ]; then
-            python scripts/daily_sync.py --full
-          else
-            python scripts/daily_sync.py
-          fi
+          echo "## Daily Sync Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Full sync**: ${{ github.event.inputs.full_sync || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
