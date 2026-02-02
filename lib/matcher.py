@@ -24,197 +24,391 @@ from .slack_client import SlackClient
 
 
 def log(msg):
+    """Log with timestamp."""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 @dataclass
 class MatchResult:
+    """Result of a matching operation."""
     hubspot_id: str
     name: str
-    match_type: str
+    match_type: str  # 'company' or 'contact'
     similarity: float
     association_created: bool = False
-    stage: str = ""
+    # Company details for assignment
+    stage: str = ""  # Customer, Prospect, Agency
     owner_id: str = ""
     shared_user_ids: List[str] = field(default_factory=list)
 
 
 class SignalMatcher:
-    STAGE_PRIORITY = {"Customer": 3, "Prospect": 2, "Agency": 1}
-    CUSTOMER_STAGES = ["customer", "1105763437"]
-
-    def __init__(self, hubspot_token=None, supabase_url=None, supabase_key=None, openai_key=None, confidence_threshold=0.80, enable_slack=True):
+    """Matches HubSpot Signals to Companies using name extraction."""
+    
+    # Stage priority for tie-breaking (higher = more priority)
+    STAGE_PRIORITY = {
+        "Customer": 3,
+        "Prospect": 2,
+        "Agency": 1
+    }
+    
+    # Customer lifecycle stages
+    CUSTOMER_STAGES = ["customer", "1105763437"]  # customer and New Customer
+    
+    def __init__(
+        self,
+        hubspot_token: Optional[str] = None,
+        supabase_url: Optional[str] = None,
+        supabase_key: Optional[str] = None,
+        openai_key: Optional[str] = None,
+        confidence_threshold: float = 0.80,
+        enable_slack: bool = True
+    ):
+        """Initialize the signal matcher."""
         self.hubspot = HubSpotClient(access_token=hubspot_token)
         self.supabase = SupabaseClient(url=supabase_url, key=supabase_key)
         self.embeddings = EmbeddingGenerator(api_key=openai_key)
         self.threshold = float(os.environ.get("CONFIDENCE_THRESHOLD", confidence_threshold))
+        
+        # Initialize OpenAI client for name extraction
         api_key = openai_key or os.environ.get("OPENAI_API_KEY")
         self.openai = OpenAI(api_key=api_key)
+        
+        # Initialize Slack client
         self.slack = SlackClient() if enable_slack else None
-
+    
     def determine_company_stage(self, company_details: dict) -> str:
-        lifecyclestage = company_details.get("lifecyclestage", "").lower()
-        company_type = company_details.get("company_type", "").lower()
+        """
+        Determine the company stage for assignment logic.
+        
+        Args:
+            company_details: Company properties from HubSpot
+            
+        Returns:
+            'Customer', 'Prospect', or 'Agency'
+        """
+        lifecyclestage = (company_details.get("lifecyclestage") or "").lower()
+        company_type = (company_details.get("company_type") or "").lower()
+        
+        # Check if Agency first (company_type takes precedence)
         if company_type == "agency":
             return "Agency"
+        
+        # Check if Customer
         if lifecyclestage in self.CUSTOMER_STAGES:
             return "Customer"
+        
+        # Default to Prospect
         return "Prospect"
-
+    
     def get_assignment_for_stage(self, stage: str, company_details: dict) -> Tuple[str, List[str]]:
+        """
+        Get owner and shared users based on company stage.
+        
+        Args:
+            stage: 'Customer', 'Prospect', or 'Agency'
+            company_details: Company properties from HubSpot
+            
+        Returns:
+            Tuple of (owner_id, [shared_user_ids])
+        """
         ae_owner = company_details.get("ae_owner", "")
         sdr_owner = company_details.get("sdr_owner", "")
         brand_champ = company_details.get("brand_champ", "")
         company_owner = company_details.get("hubspot_owner_id", "")
-
+        
         if stage == "Prospect":
-            # Fallback chain: AE -> SDR -> Company Owner
+            # Fallback chain: AE → SDR → Company Owner
             owner_id = ae_owner or sdr_owner or company_owner
             # Shared: everyone else who isn't the owner
             shared_ids = [uid for uid in [ae_owner, sdr_owner, company_owner] if uid and uid != owner_id]
+            
         elif stage == "Customer":
+            # Brand Champ is owner, Company Owner is shared
             owner_id = brand_champ or company_owner
             shared_ids = [company_owner] if company_owner and company_owner != owner_id else []
-        else:
+            
+        else:  # Agency
+            # Company Owner is owner (Partner Manager)
             owner_id = company_owner
             shared_ids = []
+        
         return owner_id, shared_ids
-
+    
     def select_best_match(self, matches: List[MatchResult]) -> Optional[MatchResult]:
+        """
+        Select the best match from multiple candidates.
+        
+        Uses highest similarity score, then tie-breaks by stage priority:
+        Customer > Prospect > Agency
+        
+        Args:
+            matches: List of match results with stage info
+            
+        Returns:
+            Best match or None
+        """
         if not matches:
             return None
+        
         if len(matches) == 1:
             return matches[0]
+        
+        # Sort by: similarity DESC, stage priority DESC
         def sort_key(m):
-            return (m.similarity, self.STAGE_PRIORITY.get(m.stage, 0))
-        return sorted(matches, key=sort_key, reverse=True)[0]
-
+            stage_priority = self.STAGE_PRIORITY.get(m.stage, 0)
+            return (m.similarity, stage_priority)
+        
+        sorted_matches = sorted(matches, key=sort_key, reverse=True)
+        return sorted_matches[0]
+    
     def extract_company_names(self, text: str) -> List[str]:
+        """
+        Extract company/brand names from signal text using OpenAI.
+        
+        Args:
+            text: Signal description and citation text
+            
+        Returns:
+            List of company names mentioned in the text
+        """
         try:
             response = self.openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": """Extract all company, brand, or organization names from the text.
+                    {
+                        "role": "system",
+                        "content": """Extract all company, brand, or organization names from the text.
 Return ONLY a JSON array of strings with the exact company names as they appear.
 Do not include generic terms like "the company" or person names.
 If no companies are mentioned, return an empty array [].
 
 Examples:
-- "GoPro's headquarters will be demolished" -> ["GoPro"]
-- "Ted Baker launches Ted Baker Sport" -> ["Ted Baker"]
-- "L'Oreal and Pernod Ricard executives visit India" -> ["L'Oreal", "Pernod Ricard"]
-- "The new store opened downtown" -> []"""},
-                    {"role": "user", "content": text[:2000]}
+- "GoPro's headquarters will be demolished" → ["GoPro"]
+- "Ted Baker launches Ted Baker Sport" → ["Ted Baker"]
+- "L'Oreal and Pernod Ricard executives visit India" → ["L'Oreal", "Pernod Ricard"]
+- "The new store opened downtown" → []"""
+                    },
+                    {
+                        "role": "user",
+                        "content": text[:2000]  # Limit to 2000 chars
+                    }
                 ],
                 temperature=0,
                 max_tokens=500
             )
+            
             result = response.choices[0].message.content.strip()
+            # Parse JSON array
             if result.startswith("["):
                 companies = json.loads(result)
                 return [c.strip() for c in companies if c and isinstance(c, str)]
             return []
+            
         except Exception as e:
             log(f"  Error extracting company names: {e}")
             return []
-
+    
     def search_company_by_name(self, company_name: str) -> List[dict]:
+        """
+        Search for a company by name in Supabase using text matching.
+        
+        Args:
+            company_name: Name to search for
+            
+        Returns:
+            List of matching company records
+        """
         try:
-            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "''") 
+            # Sanitize company name for SQL ILIKE query
+            # Remove/escape characters that break PostgREST parsing
+            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "''")
+            
+            # Use Supabase client to search by name
             results = self.supabase.client.table("companies").select(
                 "hubspot_id, name, domain"
-            ).or_(f"name.ilike.%{sanitized_name}%,domain.ilike.%{sanitized_name}%").limit(5).execute()
-
+            ).or_(
+                f"name.ilike.%{sanitized_name}%,domain.ilike.%{sanitized_name}%"
+            ).limit(5).execute()
+            
             matches = []
             for record in results.data:
+                # Calculate a simple similarity score based on name match
                 name_lower = record["name"].lower() if record["name"] else ""
                 search_lower = company_name.lower()
+                
+                # Exact match = 1.0, contains = 0.9, partial = 0.8
                 if name_lower == search_lower:
                     similarity = 1.0
                 elif search_lower in name_lower or name_lower in search_lower:
                     similarity = 0.9
                 else:
                     similarity = 0.8
-                matches.append({"hubspot_id": record["hubspot_id"], "name": record["name"], "domain": record.get("domain", ""), "similarity": similarity})
+                
+                matches.append({
+                    "hubspot_id": record["hubspot_id"],
+                    "name": record["name"],
+                    "domain": record.get("domain", ""),
+                    "similarity": similarity
+                })
+            
             return matches
+            
         except Exception as e:
             log(f"  Error searching for '{company_name}': {e}")
             return []
-
+    
     def match_signal(self, signal_id: str, notify_slack: bool = True) -> dict:
+        """Match a signal to companies using name extraction and assign owners."""
         log(f"Processing signal {signal_id}...")
+        
         try:
+            # 1. Fetch signal from HubSpot
             signal = self.hubspot.get_signal(signal_id)
             properties = signal["properties"]
+            
             signal_type = properties.get("signal_type") or "company"
             signal_name = properties.get("signal_name") or "Signal"
             description = properties.get("signal_description", "") or ""
             citation = properties.get("signal_citation", "") or ""
-
+            
             log(f"  Signal type: {signal_type}")
             log(f"  Description: {description[:100]}..." if len(description) > 100 else f"  Description: {description}")
-
+            
+            # Check existing associations
             existing_companies = signal["associations"].get("companies", [])
             existing_contacts = signal["associations"].get("contacts", [])
+            
             if existing_companies or existing_contacts:
                 log(f"  Already has: {len(existing_companies)} companies, {len(existing_contacts)} contacts")
-
+            
+            # Combine text for extraction
             full_text = f"{description} {citation}".strip()
+            
             if not full_text:
                 log("  ERROR: No text content in signal")
-                return {"signal_id": signal_id, "signal_type": signal_type, "error": "No text content", "company_matches": [], "contact_matches": [], "total_matches": 0, "associations_created": 0}
-
+                return {
+                    "signal_id": signal_id,
+                    "signal_type": signal_type,
+                    "error": "No text content",
+                    "company_matches": [],
+                    "contact_matches": [],
+                    "total_matches": 0,
+                    "associations_created": 0
+                }
+            
+            # 2. Extract company names from text
             log("  Extracting company names...")
             company_names = self.extract_company_names(full_text)
             log(f"  Found companies: {company_names}")
-
+            
             if not company_names:
                 log("  No company names found in text")
+                
+                # Send Slack notification for no matches
                 if notify_slack and self.slack:
-                    self.slack.notify_signal_no_match(signal_id=signal_id, signal_name=signal_name, signal_description=description, extracted_companies=[])
-                return {"signal_id": signal_id, "signal_type": signal_type, "extracted_companies": [], "company_matches": [], "contact_matches": [], "total_matches": 0, "associations_created": 0}
-
-            all_matches = []
-            seen_ids = set()
+                    self.slack.notify_signal_no_match(
+                        signal_id=signal_id,
+                        signal_name=signal_name,
+                        signal_description=description,
+                        extracted_companies=[]
+                    )
+                
+                return {
+                    "signal_id": signal_id,
+                    "signal_type": signal_type,
+                    "extracted_companies": [],
+                    "company_matches": [],
+                    "contact_matches": [],
+                    "total_matches": 0,
+                    "associations_created": 0
+                }
+            
+            # 3. Search for each company name and get company details
+            all_matches: List[MatchResult] = []
+            seen_ids = set()  # Avoid duplicates
+            
             for company_name in company_names:
                 log(f"  Searching for: {company_name}")
                 results = self.search_company_by_name(company_name)
+                
                 for result in results:
                     if result["hubspot_id"] not in seen_ids and result["similarity"] >= self.threshold:
                         seen_ids.add(result["hubspot_id"])
+                        
+                        # Get company details for assignment
                         company_details = self.hubspot.get_company_details(result["hubspot_id"])
                         stage = self.determine_company_stage(company_details)
                         owner_id, shared_ids = self.get_assignment_for_stage(stage, company_details)
-                        match = MatchResult(hubspot_id=result["hubspot_id"], name=result["name"], match_type="company", similarity=result["similarity"], stage=stage, owner_id=owner_id, shared_user_ids=shared_ids)
+                        
+                        match = MatchResult(
+                            hubspot_id=result["hubspot_id"],
+                            name=result["name"],
+                            match_type="company",
+                            similarity=result["similarity"],
+                            stage=stage,
+                            owner_id=owner_id,
+                            shared_user_ids=shared_ids
+                        )
                         all_matches.append(match)
                         log(f"    Match: {match.name} ({match.similarity:.0%}) - {stage}")
-
+            
             if not all_matches:
                 log(f"  No matches found in database for: {company_names}")
+                
+                # Send Slack notification for no matches
                 if notify_slack and self.slack:
-                    self.slack.notify_signal_no_match(signal_id=signal_id, signal_name=signal_name, signal_description=description, extracted_companies=company_names)
-                return {"signal_id": signal_id, "signal_type": signal_type, "extracted_companies": company_names, "company_matches": [], "contact_matches": [], "total_matches": 0, "associations_created": 0}
-
+                    self.slack.notify_signal_no_match(
+                        signal_id=signal_id,
+                        signal_name=signal_name,
+                        signal_description=description,
+                        extracted_companies=company_names
+                    )
+                
+                return {
+                    "signal_id": signal_id,
+                    "signal_type": signal_type,
+                    "extracted_companies": company_names,
+                    "company_matches": [],
+                    "contact_matches": [],
+                    "total_matches": 0,
+                    "associations_created": 0
+                }
+            
+            # 4. Select best match for assignment
             best_match = self.select_best_match(all_matches)
             log(f"  Best match for assignment: {best_match.name} ({best_match.stage})")
-
+            
+            # 5. Create associations for all matches
             associations_created = 0
+            
             for match in all_matches:
                 if match.hubspot_id not in existing_companies:
-                    success = self.hubspot.create_signal_company_association(signal_id=signal_id, company_id=match.hubspot_id)
+                    success = self.hubspot.create_signal_company_association(
+                        signal_id=signal_id,
+                        company_id=match.hubspot_id
+                    )
                     match.association_created = success
                     if success:
                         associations_created += 1
-                        log(f"    Created: Signal -> {match.name}")
-                    self.supabase.log_match(signal_id=signal_id, matched_type="company", matched_hubspot_id=match.hubspot_id, confidence=match.similarity, association_created=success)
+                        log(f"    Created: Signal → {match.name}")
+                    
+                    self.supabase.log_match(
+                        signal_id=signal_id,
+                        matched_type="company",
+                        matched_hubspot_id=match.hubspot_id,
+                        confidence=match.similarity,
+                        association_created=success
+                    )
                 else:
                     log(f"    Skipped {match.name} (already associated)")
-
+            
+            # 6. Assign owner and shared users based on best match
             owner_name = ""
             owner_email = ""
             shared_user_names = []
             shared_user_emails = []
-
+            
             if best_match.owner_id:
                 log(f"  Assigning owner: {best_match.owner_id}")
                 owner_success = self.hubspot.update_signal_owner(signal_id, best_match.owner_id)
@@ -224,7 +418,7 @@ Examples:
                     log(f"    Owner set: {owner_name} ({owner_email})")
                 else:
                     log(f"    Failed to set owner")
-
+            
             if best_match.shared_user_ids:
                 log(f"  Assigning shared users: {best_match.shared_user_ids}")
                 shared_success = self.hubspot.update_signal_shared_users(signal_id, best_match.shared_user_ids)
@@ -232,29 +426,68 @@ Examples:
                     shared_user_names = [self.hubspot.get_owner_name(uid) for uid in best_match.shared_user_ids]
                     shared_user_emails = [self.hubspot.get_owner_email(uid) for uid in best_match.shared_user_ids]
                     log(f"    Shared users set: {shared_user_names}")
-
+            
+            # 7. Send Slack notification
             if notify_slack and self.slack and best_match.association_created:
                 self.slack.notify_signal_matched(
-                    signal_id=signal_id, signal_name=signal_name, signal_description=description,
-                    company_name=best_match.name, company_id=best_match.hubspot_id, company_stage=best_match.stage,
-                    confidence=best_match.similarity, owner_name=owner_name, shared_users=shared_user_names,
-                    owner_email=owner_email, shared_user_emails=shared_user_emails
+                    signal_id=signal_id,
+                    signal_name=signal_name,
+                    signal_description=description,
+                    company_name=best_match.name,
+                    company_id=best_match.hubspot_id,
+                    company_stage=best_match.stage,
+                    confidence=best_match.similarity,
+                    owner_name=owner_name,
+                    shared_users=shared_user_names,
+                    owner_email=owner_email,
+                    shared_user_emails=shared_user_emails
                 )
-
+            
+            # 8. Return results
             result = {
-                "signal_id": signal_id, "signal_type": signal_type, "extracted_companies": company_names,
-                "company_matches": [{"hubspot_id": m.hubspot_id, "name": m.name, "similarity": m.similarity, "stage": m.stage, "association_created": m.association_created} for m in all_matches],
-                "best_match": {"hubspot_id": best_match.hubspot_id, "name": best_match.name, "stage": best_match.stage, "owner_assigned": owner_name, "shared_users": shared_user_names},
-                "contact_matches": [], "total_matches": len(all_matches), "associations_created": associations_created
+                "signal_id": signal_id,
+                "signal_type": signal_type,
+                "extracted_companies": company_names,
+                "company_matches": [
+                    {
+                        "hubspot_id": m.hubspot_id,
+                        "name": m.name,
+                        "similarity": m.similarity,
+                        "stage": m.stage,
+                        "association_created": m.association_created
+                    }
+                    for m in all_matches
+                ],
+                "best_match": {
+                    "hubspot_id": best_match.hubspot_id,
+                    "name": best_match.name,
+                    "stage": best_match.stage,
+                    "owner_assigned": owner_name,
+                    "shared_users": shared_user_names
+                },
+                "contact_matches": [],
+                "total_matches": len(all_matches),
+                "associations_created": associations_created
             }
+            
             log(f"  Completed: {len(all_matches)} matches, {associations_created} associations")
+            
             return result
+            
         except Exception as e:
             log(f"  ERROR: {e}")
             traceback.print_exc()
-            return {"signal_id": signal_id, "error": str(e), "company_matches": [], "contact_matches": [], "total_matches": 0, "associations_created": 0}
+            return {
+                "signal_id": signal_id,
+                "error": str(e),
+                "company_matches": [],
+                "contact_matches": [],
+                "total_matches": 0,
+                "associations_created": 0
+            }
 
 
 def match_signal_standalone(signal_id: str) -> dict:
+    """Standalone function to match a signal."""
     matcher = SignalMatcher()
     return matcher.match_signal(signal_id)
