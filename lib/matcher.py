@@ -7,6 +7,7 @@ Matches HubSpot Signals to Companies by:
 4. Creating associations for matches
 5. Assigning signal owner and shared users based on company stage
 6. Sending Slack notification
+7. Updating signal status to prevent re-processing
 """
 
 import os
@@ -287,6 +288,8 @@ Examples:
             
             if not full_text:
                 log("  ERROR: No text content in signal")
+                # Mark as processed (no_match) to prevent re-processing
+                self.hubspot.update_signal_status(signal_id, HubSpotClient.SIGNAL_STATUS_NO_MATCH)
                 return {
                     "signal_id": signal_id,
                     "signal_type": signal_type,
@@ -304,6 +307,10 @@ Examples:
             
             if not company_names:
                 log("  No company names found in text")
+                
+                # Mark as processed (no_match) to prevent re-processing
+                self.hubspot.update_signal_status(signal_id, HubSpotClient.SIGNAL_STATUS_NO_MATCH)
+                log("  Status set to 'no_match'")
                 
                 # Send Slack notification for no matches
                 if notify_slack and self.slack:
@@ -355,6 +362,10 @@ Examples:
             
             if not all_matches:
                 log(f"  No matches found in database for: {company_names}")
+                
+                # Mark as processed (no_match) to prevent re-processing
+                self.hubspot.update_signal_status(signal_id, HubSpotClient.SIGNAL_STATUS_NO_MATCH)
+                log("  Status set to 'no_match'")
                 
                 # Send Slack notification for no matches
                 if notify_slack and self.slack:
@@ -427,7 +438,11 @@ Examples:
                     shared_user_emails = [self.hubspot.get_owner_email(uid) for uid in best_match.shared_user_ids]
                     log(f"    Shared users set: {shared_user_names}")
             
-            # 7. Send Slack notification
+            # 7. Mark signal as processed (matched)
+            self.hubspot.update_signal_status(signal_id, HubSpotClient.SIGNAL_STATUS_MATCHED)
+            log("  Status set to 'matched'")
+            
+            # 8. Send Slack notification
             if notify_slack and self.slack and best_match.association_created:
                 self.slack.notify_signal_matched(
                     signal_id=signal_id,
@@ -443,7 +458,7 @@ Examples:
                     shared_user_emails=shared_user_emails
                 )
             
-            # 8. Return results
+            # 9. Return results
             result = {
                 "signal_id": signal_id,
                 "signal_type": signal_type,
