@@ -1,4 +1,5 @@
-"""Signal Matcher - Company Name Extraction with Assignment Logic
+"""
+Signal Matcher - Company Name Extraction with Assignment Logic
 
 Matches HubSpot Signals to Companies by:
 1. Extracting company names from signal text using OpenAI
@@ -221,9 +222,12 @@ Examples:
             List of matching company records
         """
         try:
-            # Sanitize company name for SQL ILIKE query
-            # Remove/escape characters that break PostgREST parsing
-            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "''")
+            # Sanitize company name for PostgREST ILIKE filter
+            # - Remove commas and periods that may break parsing
+            # - Replace apostrophes with % wildcard for fuzzy matching
+            #   (PostgREST doesn't handle SQL escaping like '' correctly)
+            #   This allows "GT's Living Foods" to match when searching for "GT's"
+            sanitized_name = company_name.replace(",", "").replace(".", "").replace("'", "%")
             
             # Use Supabase client to search by name
             results = self.supabase.client.table("companies").select(
