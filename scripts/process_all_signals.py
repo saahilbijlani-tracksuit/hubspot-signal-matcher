@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Process All Signals Script
 
-Finds and matches unassociated signals in HubSpot.
+Finds and matches unprocessed signals in HubSpot.
+Skips signals that have already been processed (status = 'matched' or 'no_match').
 
 Usage:
     python scripts/process_all_signals.py
@@ -63,21 +64,23 @@ def main():
         traceback.print_exc()
         sys.exit(1)
     
-    # Fetch signals
+    # Fetch signals - now using list_unprocessed_signals to skip already-processed ones
     log("")
     log("-"*40)
-    log(f"Fetching signals (limit: {args.limit})...")
+    log(f"Fetching unprocessed signals (limit: {args.limit})...")
     
     try:
-        signals = hubspot.list_signals_without_associations(limit=args.limit)
-        log(f"Found {len(signals)} signals to check")
+        # Use list_unprocessed_signals instead of list_signals_without_associations
+        # This filters out signals with status 'matched' or 'no_match'
+        signals = hubspot.list_unprocessed_signals(limit=args.limit)
+        log(f"Found {len(signals)} unprocessed signals")
     except Exception as e:
         log(f"ERROR: Failed to fetch signals: {e}")
         traceback.print_exc()
         sys.exit(1)
     
     if not signals:
-        log("No signals found to process")
+        log("No unprocessed signals found - all caught up!")
         sys.exit(0)
     
     # Process signals
@@ -109,7 +112,7 @@ def main():
                 total_associations += associations
                 log(f"  -> {matches} matches, {associations} associations created")
             else:
-                log(f"  -> No matches found")
+                log(f"  -> No matches found (marked as no_match)")
                 
         except Exception as e:
             log(f"  ERROR: {e}")

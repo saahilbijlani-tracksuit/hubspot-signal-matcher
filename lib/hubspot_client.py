@@ -23,6 +23,11 @@ class HubSpotClient:
     CONTACT_OBJECT_TYPE_API = "contacts"
     SIGNAL_TO_COMPANY_ASSOCIATION = 421
     SIGNAL_TO_CONTACT_ASSOCIATION = None
+    
+    # Signal status values for tracking processed signals
+    SIGNAL_STATUS_MATCHED = "matched"
+    SIGNAL_STATUS_NO_MATCH = "no_match"
+    SIGNAL_STATUS_PENDING = "pending"
 
     def __init__(self, access_token: Optional[str] = None):
         self.access_token = access_token or os.environ.get("HUBSPOT_ACCESS_TOKEN")
@@ -80,6 +85,71 @@ class HubSpotClient:
             if not after:
                 break
         return unassociated
+
+    def list_unprocessed_signals(self, limit: int = 100) -> list:
+        """
+        List signals that haven't been processed yet.
+        
+        Filters out signals with status 'matched' or 'no_match'.
+        This prevents re-processing signals that were already handled.
+        
+        Args:
+            limit: Maximum number of signals to return
+            
+        Returns:
+            List of signal dicts that need processing
+        """
+        unprocessed = []
+        after = None
+        
+        while len(unprocessed) < limit:
+            page = self.list_signals(limit=min(100, limit - len(unprocessed)), after=after)
+            
+            for signal in page["results"]:
+                status = (signal.get("properties", {}).get("signal_status") or "").lower()
+                
+                # Skip signals that have already been processed
+                if status in [self.SIGNAL_STATUS_MATCHED, self.SIGNAL_STATUS_NO_MATCH]:
+                    continue
+                
+                # Also check if it has associations (already matched)
+                assoc = signal.get("associations", {})
+                if assoc.get("companies", []) or assoc.get("contacts", []):
+                    continue
+                
+                unprocessed.append(signal)
+                if len(unprocessed) >= limit:
+                    break
+            
+            after = page["paging"]["next"]
+            if not after:
+                break
+        
+        return unprocessed
+
+    def update_signal_status(self, signal_id: str, status: str) -> bool:
+        """
+        Update the processing status of a signal.
+        
+        Args:
+            signal_id: HubSpot Signal ID
+            status: New status value ('matched', 'no_match', 'pending')
+            
+        Returns:
+            True if successful
+        """
+        try:
+            url = f"https://api.hubapi.com/crm/v3/objects/{self.SIGNAL_OBJECT_TYPE}/{signal_id}"
+            headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+            payload = {"properties": {"signal_status": status}}
+            response = requests.patch(url, headers=headers, json=payload)
+            if response.status_code == 200:
+                return True
+            print(f"Error updating signal status: {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            print(f"Error updating signal status: {e}")
+            return False
 
     def get_company(self, company_id: str) -> dict:
         response = self.client.crm.companies.basic_api.get_by_id(company_id=company_id, properties=["name", "domain"])
